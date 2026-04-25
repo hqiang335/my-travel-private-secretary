@@ -25,10 +25,29 @@ flyai search-poi --city-name "杭州" --keyword "西湖 门票"
 
 连接失败或工具不可用时，在项目目录运行：
 ```bash
-/xiaohongshu/xiaohongshu-mcp-darwin-arm64 -headless=false
+./xiaohongshu/xiaohongshu-mcp-darwin-arm64 -headless=false
 ```
 
 首次使用或登录失效时必须使用 `-headless=false` 完成扫码/登录。启动后确认服务暴露在 `.mcp.json` 的 `http://localhost:18060/mcp`。
+
+使用约束：
+
+- 小红书只用于真实评价、避雷、图片、拍照点、排队体验和用户体验补充。
+- 禁止并发调用 `search_feeds`，每次只搜索 1 个关键词。
+- 禁止大量翻页；每个主题最多 1-2 次搜索。
+- 同一目的地、同一关键词当天优先复用 `.claude/cache/xiaohongshu/` 下的缓存。
+- 用户提供小红书链接时优先使用链接，不再对同一主题重复搜索。
+- `search_feeds` 超时后等待并用更窄关键词重试 1 次；仍失败则停止小红书搜索，标记“待补查”，继续用高德和飞猪完成攻略骨架。
+
+超时处理模板：
+
+```markdown
+- 小红书关键词：
+- 状态：超时 / 已降级
+- 重试关键词：
+- 影响维度：
+- 替代来源：高德 / 飞猪 / 用户提供链接
+```
 
 ## 高德地图 MCP
 

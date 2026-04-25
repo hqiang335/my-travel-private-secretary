@@ -110,7 +110,7 @@ http://localhost:18060/mcp
 如果本地使用仓库内的小红书 MCP 二进制文件，连接失败或首次登录时运行：
 
 ```bash
-/xiaohongshu/xiaohongshu-mcp-darwin-arm64 -headless=false
+./xiaohongshu/xiaohongshu-mcp-darwin-arm64 -headless=false
 ```
 
 保持该进程运行后，再重试小红书 MCP 工具调用。

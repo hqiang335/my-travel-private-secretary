@@ -49,7 +49,7 @@ Required credentials:
 If xiaohongshu-mcp connection fails or requires first-time login:
 
 ```bash
-/xiaohongshu/xiaohongshu-mcp-darwin-arm64 -headless=false
+./xiaohongshu/xiaohongshu-mcp-darwin-arm64 -headless=false
 ```
 
 Keep this process running, then retry MCP tool calls.

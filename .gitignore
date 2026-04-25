@@ -1,4 +1,5 @@
 .DS_Store
 .claude/travel-profiles/
+.claude/cache/
 *.xlsx
 .mcp.json
