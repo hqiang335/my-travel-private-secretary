@@ -4,96 +4,172 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **旅游私人秘书 (Travel Private Secretary)** — an AI-driven workflow that takes a user's travel request and produces a fully formatted Notion itinerary page. It is not a software application; it is a collection of skill definitions, reference docs, and user preference profiles that guide Claude through a 5-phase execution pipeline.
+This is a skill-based travel planning system that generates personalized travel guides and writes them to Notion databases. The system uses a multi-skill orchestration pattern with four specialized skills that work together sequentially.
 
-## Triggering the Workflow
+## Architecture
 
-Invoke the skill via `/travel-secretary` or when the user asks to plan a trip. The skill definition lives at [.claude/skills/travel-secretary/SKILL.md](.claude/skills/travel-secretary/SKILL.md).
+### Skill Orchestration Pattern
 
-## 5-Phase Execution Pipeline
+The main workflow follows this sequence:
 
-### Phase 0 — Pre-flight checks
-- Verify `xiaohongshu-mcp` is running (`ps aux | grep xiaohongshu-mcp`). It must be started manually; first run requires QR-code login.
-- Ensure profile directory exists: `.claude/travel-profiles/`
+1. **travel-guide** (orchestrator) - Entry point skill that coordinates the entire workflow
+2. **travel-intake** - Collects user preferences, constraints, and travel boundaries
+3. **travel-research** - Gathers evidence from multiple data sources
+4. **travel-publisher** - Generates Notion pages and performs final validation
 
-### Phase 1 — Smart questionnaire
-- Read existing profiles from `.claude/travel-profiles/*.json`; offer to reuse.
-- Extract known info from the user's message before asking questions.
-- Ask in batches of ≤ 4 questions using `AskUserQuestion`. **Never include `_` fields in the `filters` object** (causes MCP error -32602).
-- Save profile to `.claude/travel-profiles/{destination}_{YYYYMMDD}.json`.
+Each skill is self-contained in `.claude/skills/<skill-name>/SKILL.md` with optional reference files in `references/` subdirectories.
 
-### Phase 2 — Parallel data collection
-Run all three sources in parallel:
+### Data Sources and Tools
 
-| Source | Tool | Key params |
-|--------|------|-----------|
-| 小红书 | `xiaohongshu-mcp` search tools | 4 searches: 攻略/住宿/美食/避坑 |
-| 高德地图 | `amap-maps` MCP tools | weather, geo, distance |
-| 飞猪 | `flyai` CLI (Bash) | see exact param names below |
+The project integrates three MCP servers and one CLI tool:
 
-**flyai CLI exact parameter names** (wrong names silently fail):
+- **xiaohongshu-mcp** (HTTP): Real user travel notes and reviews from Xiaohongshu
+- **amap-maps** (stdio): Gaode Maps for geocoding, POI search, routing, distance calculation, and weather
+- **notion** (stdio): Notion API for database and page operations
+- **flyai-cli** (command-line): Fliggy travel data for flights, hotels, attractions, and bookings
+
+**Critical constraint**: Skills must call `flyai-cli` directly via bash commands. Do NOT depend on or reference an external `flyai` skill.
+
+## MCP Configuration
+
+Project-level MCP configuration lives in `.mcp.json` (git-ignored, contains credentials). To set up:
+
 ```bash
-flyai search-hotel --dest-name "城市" --hotel-types "类型" --check-in-date "日期" --check-out-date "日期"
-flyai search-flight --origin "出发城市" --destination "目的地" --dep-date "日期"
-flyai search-poi --city-name "城市" --keyword "景点名 门票"
+cp .mcp.example.json .mcp.json
+# Edit .mcp.json with your credentials
 ```
 
-### Phase 3 — Itinerary planning
-- Cluster attractions by geographic proximity (use amap distance data).
-- Match daily count to pacing: 特种兵 4-5/day, 适中 2-3/day, 度假 1/day.
-- Structure each day: 上午 → 午餐 → 下午 → 晚餐 → 夜间 → 住宿.
+Required credentials:
+- `AMAP_MAPS_API_KEY`: Gaode Maps Web Service API key
+- `OPENAPI_MCP_HEADERS`: Notion Integration token (format: `{"Authorization": "Bearer YOUR_TOKEN", "Notion-Version": "2022-06-28"}`)
+- xiaohongshu-mcp URL: Default `http://localhost:18060/mcp`
 
-### Phase 4 — Notion page generation
-Use **Python `urllib`** to call Notion REST API directly (do not use Notion MCP — requires restart).
+### Starting xiaohongshu-mcp
 
-Read token from `~/.claude.json`:
-```python
-config["mcpServers"]["notion"]["env"]["OPENAPI_MCP_HEADERS"]  # parse Bearer token
+If xiaohongshu-mcp connection fails or requires first-time login:
+
+```bash
+/xiaohongshu/xiaohongshu-mcp-darwin-arm64 -headless=false
 ```
 
-**Critical limit**: Notion API accepts ≤ 100 blocks per request. Split into batches:
-- Batch 1 (≤ 95 blocks): create page via `POST /v1/pages`
-- Batch 2+: append via `PATCH /v1/blocks/{page_id}/children`
+Keep this process running, then retry MCP tool calls.
 
-Target database: `🗺️ 旅游攻略库` — search first, create if missing.
+## flyai-cli Setup
 
-Page structure (in order): cover image → overview table → weather/booking callout → transport → Day 1/2/3 → hotels → ticket table → budget table → 避坑 callout → todo checklist → 小红书 sources.
+Install globally:
 
-### Phase 5 — Wrap-up
-- Append `last_generated`, `notion_page_id`, `notion_page_url`, `notion_db_id` to the profile JSON.
-- Update `memory/notion-config.md` with the database ID.
-- Report the Notion page URL and key highlights to the user.
-
-## Key Files
-
-| Path | Purpose |
-|------|---------|
-| `.claude/skills/travel-secretary/SKILL.md` | Master execution handbook |
-| `.claude/skills/travel-secretary/references/` | Per-phase detailed reference docs |
-| `.claude/travel-profiles/` | Saved user preference profiles (JSON) |
-| `flyai/SKILL.md` | flyai CLI usage and display rules |
-| `flyai/references/` | Per-command parameter schemas |
-| `偏好初始化问卷.md` | Initial preference questionnaire template |
-| `旅游规划全维度深度考量表.xlsx` | Comprehensive planning checklist |
-
-## Notion Block Helpers (reference)
-
-Reuse these patterns when building blocks in Python:
-```python
-def txt(content, bold=False, link=None): ...
-def h1/h2/h3(content): ...
-def para(*parts): ...
-def bullet(*parts): ...
-def callout(content, emoji="📍"): ...
-def todo(content, checked=False): ...
-def table_row(cells): ...   # table_width must match len(cells)
-def image_block(url): ...   # embed 小红书 URLs directly, no download needed
+```bash
+npm i -g @fly-ai/flyai-cli
 ```
 
-## Common Pitfalls
+Verify installation:
 
-- `AskUserQuestion` filters must not contain `_` fields → MCP error -32602
-- flyai param names: `--dest-name` not `--city`; `--origin` not `--from`; `--dep-date` not `--date`
-- Notion blocks per request ≤ 100 (use ≤ 95 for safety)
-- 小红书 image URLs are time-limited; embed directly into Notion without downloading
-- flyai booking links are time-limited; label prices as "参考价格，以实时为准"
+```bash
+flyai --help
+flyai keyword-search --query "Hangzhou 3-day trip"
+```
+
+Expected output: JSON with `status: 0` and `message: success`.
+
+### Common flyai-cli Commands
+
+```bash
+# Keyword search
+flyai keyword-search --query "杭州 3日游"
+
+# Hotel search
+flyai search-hotel --dest-name "杭州" --hotel-types "高端酒店" \
+  --check-in-date "2026-05-01" --check-out-date "2026-05-03"
+
+# Flight search
+flyai search-flight --origin "北京" --destination "杭州" --dep-date "2026-05-01"
+
+# POI/attraction search
+flyai search-poi --city-name "杭州" --keyword "西湖 门票"
+```
+
+## Skill Development Guidelines
+
+### When to Use Each Skill
+
+- **travel-guide**: User requests travel planning, itinerary generation, or Notion guide creation
+- **travel-intake**: Need to collect user preferences before research (missing destination, dates, or constraints)
+- **travel-research**: Need to search Xiaohongshu notes, Gaode Maps data, or Fliggy products
+- **travel-publisher**: Ready to write structured guide to Notion after research is complete
+
+### Quality Requirements
+
+All generated guides must satisfy the dimensions checklist in `.claude/skills/travel-guide/dimensions.md`:
+
+1. Personal preference modeling
+2. Inspiration and attraction discovery
+3. Destination deep research (visa, weather, safety)
+4. Transportation and accommodation booking
+5. Itinerary and pacing planning
+6. Budget and financial management
+7. Cultural and social integration
+8. Supplies and emergency timeline
+
+### Evidence and Attribution Rules
+
+- **Xiaohongshu notes**: Include title and jump link
+- **Fliggy products**: Include booking link, mark prices as "参考价格，以实时为准"
+- **Gaode Maps**: Cite source for routing, distance, and weather data
+- **Notion output**: Return page URL after publishing
+- **Images**: Record object, image URL, source link, and usage suggestion; never fabricate sources
+
+### Hard Constraints
+
+- Do NOT arrange daily itinerary until departure and return boundaries are confirmed
+- Lock down major transportation first, then arrange local transfers, hotels, and daily activities
+- Group by core attractions/activities, then filter outward for hotels, restaurants, and commutes
+- Key movements (airport/station ↔ hotel ↔ attraction ↔ restaurant) must use Gaode Maps MCP for method, distance, and estimated time
+- Provide indoor backup plans for weather warnings (high temperature, heavy rain, typhoon)
+- Notion database uses gallery view; selected attractions, restaurants, and hotels should include images with source attribution
+
+## File Structure
+
+```
+.claude/skills/
+├── README.md                    # Skill directory overview
+├── travel-guide/
+│   ├── SKILL.md                 # Main orchestrator
+│   └── dimensions.md            # Required quality dimensions
+├── travel-intake/
+│   └── SKILL.md                 # Preference collection
+├── travel-research/
+│   ├── SKILL.md                 # Multi-source research
+│   └── references/              # Detailed research templates
+│       ├── 00-tool-contracts.md
+│       ├── 01-transport-boundary.md
+│       ├── 02-attractions-activities.md
+│       ├── 03-hotels-dining.md
+│       ├── 04-routing-weather-risk.md
+│       └── 05-evidence-output.md
+└── travel-publisher/
+    ├── SKILL.md                 # Notion integration
+    └── notion-output.md         # Output format spec
+```
+
+## Verification Checklist
+
+After setup, verify in order:
+
+```bash
+# Validate MCP config JSON
+python -m json.tool .mcp.json >/dev/null
+
+# Verify flyai-cli
+flyai --help
+flyai keyword-search --query "Shanghai cruise"
+
+# Check MCP tools in Claude Code
+# Reload project and verify xiaohongshu-mcp, amap-maps, and notion tools are available
+```
+
+## What NOT to Commit
+
+- `.mcp.json` (contains credentials)
+- Notion tokens or Gaode Maps API keys
+- Local login state, caches, or personal travel profiles
+- Any files containing sensitive user data
